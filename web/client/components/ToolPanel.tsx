@@ -1,5 +1,8 @@
 import { useState } from "react";
 
+// Teto de eventos: mantém só os mais recentes (painel não cresce infinito).
+export const MAX_TOOL_EVENTS = 150;
+
 export type PanelEvent =
   | { id: string; kind: "tool"; toolName: string; toolInput?: Record<string, any>; timestamp: string }
   | { id: string; kind: "guard"; tool: string; reason: string; timestamp: string }
@@ -88,7 +91,7 @@ function Row({ event }: { event: PanelEvent }) {
         <span className="text-[10px] text-gray-400 mt-0.5">{open ? "▼" : "▶"}</span>
       </button>
       {open && (
-        <pre className="text-[11px] bg-white mx-3 mb-2 p-2 rounded border border-gray-100 overflow-x-auto whitespace-pre-wrap">
+        <pre className="text-[11px] bg-white mx-3 mb-2 p-2 rounded border border-gray-100 max-h-64 overflow-auto whitespace-pre-wrap">
           {body}
         </pre>
       )}
@@ -97,13 +100,20 @@ function Row({ event }: { event: PanelEvent }) {
 }
 
 export function ToolPanel({ events }: { events: PanelEvent[] }) {
+  // mais recentes no topo (sem precisar rolar até o fim pra ver a atividade atual)
+  const ordered = [...events].reverse();
   return (
     <div className="flex flex-col h-full">
       <div className="flex-1 overflow-y-auto">
         {events.length === 0 ? (
           <p className="text-xs text-gray-400 p-3">Tools, prefetch e bloqueios do guard aparecem aqui ao vivo.</p>
         ) : (
-          events.map((e) => <Row key={e.id} event={e} />)
+          <>
+            {ordered.map((e) => <Row key={e.id} event={e} />)}
+            {events.length >= MAX_TOOL_EVENTS && (
+              <p className="text-[10px] text-gray-400 px-3 py-2">Mostrando os últimos {MAX_TOOL_EVENTS} eventos.</p>
+            )}
+          </>
         )}
       </div>
     </div>

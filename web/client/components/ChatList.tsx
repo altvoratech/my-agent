@@ -1,12 +1,6 @@
 import { useState } from "react";
 import { Plus, MessageSquare, Pencil, Check, X, Home } from "lucide-react";
-
-interface Chat {
-  id: string;
-  title: string;
-  createdAt: string;
-  updatedAt: string;
-}
+import type { Chat } from "../types";
 
 interface ChatListProps {
   chats: Chat[];
