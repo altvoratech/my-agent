@@ -10,6 +10,7 @@
 // roda testes e reporta; quem escreve continua sendo o agente principal.
 import { query } from '@anthropic-ai/claude-agent-sdk';
 import { createGuardedHooks } from '../core/guard.ts';
+import { buildAgentOptions } from './runtime.ts';
 
 const TESTER_SYSTEM = `Você é o Tester — valida o projeto e REPORTA, sem consertar.
 Processo:
@@ -30,18 +31,17 @@ export async function* runTester(cwd: string, instruction?: string) {
 
   const q = query({
     prompt: task,
-    options: {
+    // Bash liberado; SEM canUseTool e SEM askOnMutate -> não cai no modal. O guard
+    // segue ativo barrando o destrutivo (DANGEROUS_BASH / .env / fora do cwd).
+    options: buildAgentOptions({
       model: 'claude-sonnet-4-6',
       cwd,
       maxTurns: 30,
-      includePartialMessages: true, // streama o relatório token a token
-      // Bash liberado; SEM canUseTool e SEM askOnMutate -> não cai no modal.
-      // O guard segue ativo barrando o destrutivo (DANGEROUS_BASH / .env / fora do cwd).
+      stream: true, // streama o relatório token a token
+      prompt: TESTER_SYSTEM,
       allowedTools: ['Read', 'Glob', 'Grep', 'Bash', 'TodoWrite'],
-      permissionMode: 'default',
       hooks: createGuardedHooks(cwd),
-      systemPrompt: { type: 'preset', preset: 'claude_code', append: TESTER_SYSTEM },
-    },
+    }),
   });
 
   for await (const msg of q) yield msg;

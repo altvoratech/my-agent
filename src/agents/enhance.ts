@@ -3,6 +3,7 @@
 // (sem o motor multi-modo do prompt-enhancer, que tem modos cinematic/image que
 // não fazem sentido aqui). Roda via Agent SDK com Haiku (rápido/barato), one-shot.
 import { query } from "@anthropic-ai/claude-agent-sdk";
+import { buildAgentOptions } from "./runtime.ts";
 
 const MODEL = "claude-haiku-4-5-20251001";
 
@@ -41,7 +42,8 @@ export async function enhancePrompt(
 ): Promise<{ originalPrompt: string; improvedPrompt: string; usedExamples: number }> {
   const q = query({
     prompt: buildUserPrompt(text, examples),
-    options: { model: MODEL, maxTurns: 1, systemPrompt: SYSTEM },
+    // one-shot: prompt CRU (sem o preset claude_code), 1 turno
+    options: buildAgentOptions({ model: MODEL, maxTurns: 1, prompt: SYSTEM, rawPrompt: true }),
   });
   let out = "";
   for await (const m of q) {

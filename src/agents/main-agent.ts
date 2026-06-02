@@ -5,6 +5,7 @@
 import { consultorServer, CONSULTOR_TOOL } from './consultor.ts';
 import { subagents } from './subagents.ts';
 import { createGuardedHooks } from '../core/guard.ts';
+import { buildAgentOptions } from './runtime.ts';
 
 export function buildSystemPrompt(cwd: string) {
   return `Você é um assistente de engenharia trabalhando no projeto em: ${cwd}
@@ -39,31 +40,30 @@ export interface MainAgentParams {
 
 // Monta as `options` do query() do agente principal (tudo menos o prompt/queue — isso é
 // transporte). Recebe o onApproval (callback que pergunta ao browser) por injeção.
+// O scaffolding comum (preset, permissionMode, stream) vem de buildAgentOptions.
 export function buildMainAgentOptions({ model, cwd, effort, onApproval }: MainAgentParams) {
-  return {
+  return buildAgentOptions({
     model,
     cwd,
+    effort,
     maxTurns: 200,
-    // nível de raciocínio (low/medium/high/xhigh); omitido = default do SDK
-    ...(effort ? { effort: effort as any } : {}),
-    // emite stream_event (text_delta) para o front renderizar token a token
-    includePartialMessages: true,
+    stream: true, // emite stream_event para o front renderizar token a token
+    prompt: buildSystemPrompt(cwd),
     mcpServers: { consultor: consultorServer },
     // subagentes especialistas (read-only) que o agente principal invoca via Agent
     agents: subagents,
     // leitura + delegação pré-aprovadas; escrita/exec caem no canUseTool (default mode)
     allowedTools: ['Read', 'Glob', 'Grep', 'TodoWrite', 'Agent', 'Task', CONSULTOR_TOOL],
-    permissionMode: 'default' as const,
-    systemPrompt: { type: 'preset' as const, preset: 'claude_code' as const, append: buildSystemPrompt(cwd) },
+    // guard veta o destrutivo e encaminha mutações ao canUseTool (askOnMutate)
     hooks: createGuardedHooks(cwd, { askOnMutate: true }),
-    canUseTool: async (toolName: string, input: any) => {
+    canUseTool: async (toolName, input) => {
       if (!NEEDS_APPROVAL.has(toolName) || !onApproval) {
-        return { behavior: 'allow' as const, updatedInput: input };
+        return { behavior: 'allow', updatedInput: input };
       }
       const ok = await onApproval({ tool: toolName, input });
       return ok
-        ? { behavior: 'allow' as const, updatedInput: input }
-        : { behavior: 'deny' as const, message: 'Ação recusada pelo usuário.' };
+        ? { behavior: 'allow', updatedInput: input }
+        : { behavior: 'deny', message: 'Ação recusada pelo usuário.' };
     },
-  };
+  });
 }

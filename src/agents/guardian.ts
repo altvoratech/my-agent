@@ -10,6 +10,7 @@ import { z } from 'zod';
 import { retrieve, type RetrievedChunk } from '../rag/retrieve.ts';
 import { log } from '../core/logger.ts';
 import { trackingHooks } from '../core/hooks.ts';
+import { buildAgentOptions } from './runtime.ts';
 
 const TOP_K = 8;
 
@@ -83,15 +84,15 @@ export async function askGuardian(
 
   for await (const message of query({
     prompt,
-    options: {
+    options: buildAgentOptions({
       model: 'claude-sonnet-4-6',
       maxTurns: 6,
       maxBudgetUsd: 0.5,
-      mcpServers: { library: libraryServer },
+      prompt: SYSTEM,
       allowedTools: ['mcp__library__search_docs'],
-      systemPrompt: { type: 'preset', preset: 'claude_code', append: SYSTEM },
+      mcpServers: { library: libraryServer },
       hooks: trackingHooks, // captura tool calls do guardião (ex: search_docs extra)
-    },
+    }),
   })) {
     if (message.type === 'assistant' && message.message?.content) {
       for (const block of message.message.content) {
