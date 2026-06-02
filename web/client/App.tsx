@@ -14,6 +14,7 @@ interface Chat {
   title: string;
   createdAt: string;
   updatedAt: string;
+  cwd?: string; // diretório de trabalho do chat
 }
 
 interface Message {
@@ -48,9 +49,15 @@ function statusForTool(name: string, input: any = {}): string {
 const API_BASE = "/api";
 const WS_URL = `ws://${window.location.hostname}:3001/ws`;
 
+// roteamento simples (History API): / = launcher, /chat/<id> = chat
+function chatIdFromPath(): string | null {
+  const m = window.location.pathname.match(/^\/chat\/(.+)$/);
+  return m ? decodeURIComponent(m[1]) : null;
+}
+
 export default function App() {
   const [chats, setChats] = useState<Chat[]>([]);
-  const [selectedChatId, setSelectedChatId] = useState<string | null>(null);
+  const [selectedChatId, setSelectedChatId] = useState<string | null>(() => chatIdFromPath());
   const [messages, setMessages] = useState<Message[]>([]);
   const [toolEvents, setToolEvents] = useState<PanelEvent[]>([]);
   const [isLoading, setIsLoading] = useState(false);
@@ -67,17 +74,18 @@ export default function App() {
   // tools que o usuário marcou como "✓ Sempre" -> auto-aprovadas no resto da sessão
   const [alwaysApprove, setAlwaysApprove] = useState<Set<string>>(new Set());
   const [lastResult, setLastResult] = useState<{ cost?: number; duration?: number; inputTokens?: number; outputTokens?: number } | null>(null);
-  const [projectInfo, setProjectInfo] = useState<{ cwd: string; branch: string; lastCommit: string } | null>(null);
+  const [recentProjects, setRecentProjects] = useState<{ path: string; name: string; lastOpenedAt: string; branch: string }[]>([]);
 
   const fetchGitDiff = useCallback(async () => {
     try {
-      const res = await fetch(`${API_BASE}/git/diff`);
+      const q = cwd.trim() ? `?cwd=${encodeURIComponent(cwd.trim())}` : "";
+      const res = await fetch(`${API_BASE}/git/diff${q}`);
       const data = await res.json();
       setGit({ diff: data.diff || "", status: data.status || "", numstat: data.numstat || "" });
     } catch (error) {
       console.error("Failed to fetch git diff:", error);
     }
-  }, []);
+  }, [cwd]);
 
   // Handle WebSocket messages
   const handleWSMessage = useCallback((message: any) => {
@@ -225,6 +233,8 @@ export default function App() {
         fetchChats();
         // o agente pode ter editado arquivos -> atualiza o diff
         fetchGitDiff();
+        // o diretório usado vira/atualiza projeto recente
+        fetchProjects();
         break;
 
       case "approval_request":
@@ -294,8 +304,10 @@ export default function App() {
     }
   };
 
-  // Create new chat
-  const createChat = async () => {
+  // Create new chat — herda o cwd (passado, ou o atual). O novo chat já nasce com
+  // esse diretório localmente para o effect de restauração não zerá-lo.
+  const createChat = async (cwdForChat?: string) => {
+    const useCwd = cwdForChat ?? cwd;
     try {
       const res = await fetch(`${API_BASE}/chats`, {
         method: "POST",
@@ -303,7 +315,7 @@ export default function App() {
       });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const chat = await res.json();
-      setChats((prev) => [chat, ...prev]);
+      setChats((prev) => [{ ...chat, cwd: useCwd }, ...prev]);
       selectChat(chat.id);
     } catch (error) {
       console.error("Failed to create chat:", error);
@@ -337,29 +349,62 @@ export default function App() {
       const res = await fetch(`${API_BASE}/chats/${chatId}`, { method: "DELETE" });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       setChats((prev) => prev.filter((c) => c.id !== chatId));
-      if (selectedChatId === chatId) {
-        setSelectedChatId(null);
-        setMessages([]);
-      }
+      if (selectedChatId === chatId) goHome();
     } catch (error) {
       console.error("Failed to delete chat:", error);
       toast.error("Não consegui arquivar o chat.");
     }
   };
 
-  // Select a chat
-  const selectChat = (chatId: string) => {
-    setSelectedChatId(chatId);
+  // limpa o estado da view ao trocar de chat (o subscribe recarrega o histórico)
+  const resetChatView = () => {
     setMessages([]);
     setToolEvents([]);
     setTodos([]);
     setApproval(null);
     setAlwaysApprove(new Set());
     setIsLoading(false);
-
-    // Subscribe to chat via WebSocket
-    sendJsonMessage({ type: "subscribe", chatId });
   };
+
+  // Select a chat -> reflete na URL (/chat/<id>). O cwd é restaurado pelo effect abaixo.
+  const selectChat = (chatId: string) => {
+    resetChatView();
+    setSelectedChatId(chatId);
+    if (chatIdFromPath() !== chatId) window.history.pushState({}, "", `/chat/${chatId}`);
+  };
+
+  // restaura o diretório do chat ao TROCAR de seleção (uma vez por seleção, para
+  // não atropelar edições manuais do campo nem o cwd de um chat recém-aberto).
+  const lastCwdChat = useRef<string | null>(null);
+  useEffect(() => {
+    if (selectedChatId === lastCwdChat.current) return;
+    const chat = chats.find((c) => c.id === selectedChatId);
+    if (!chat) return; // ainda não carregou; o effect roda de novo quando `chats` mudar
+    lastCwdChat.current = selectedChatId;
+    setCwd(chat.cwd ?? "");
+  }, [selectedChatId, chats]);
+
+  // Volta para a tela inicial (launcher) -> URL /
+  const goHome = () => {
+    resetChatView();
+    setSelectedChatId(null);
+    if (window.location.pathname !== "/") window.history.pushState({}, "", "/");
+  };
+
+  // back/forward do browser: sincroniza a seleção com a URL
+  useEffect(() => {
+    const onPop = () => {
+      resetChatView();
+      setSelectedChatId(chatIdFromPath());
+    };
+    window.addEventListener("popstate", onPop);
+    return () => window.removeEventListener("popstate", onPop);
+  }, []);
+
+  // (re)subscribe sempre que conectar com um chat selecionado (cobre load inicial e reconexão)
+  useEffect(() => {
+    if (isConnected && selectedChatId) sendJsonMessage({ type: "subscribe", chatId: selectedChatId });
+  }, [isConnected, selectedChatId, sendJsonMessage]);
 
   // Interrompe o turno atual do agente
   const handleStop = () => {
@@ -407,13 +452,27 @@ export default function App() {
     });
   };
 
+  // projetos recentes (tela inicial)
+  const fetchProjects = async () => {
+    try {
+      const res = await fetch(`${API_BASE}/projects`);
+      const data = await res.json();
+      setRecentProjects(data.projects || []);
+    } catch (error) {
+      console.error("Failed to fetch projects:", error);
+    }
+  };
+
+  // abre um projeto: seta o cwd e cria um novo chat já nele
+  const openProject = (path: string) => {
+    setCwd(path);
+    createChat(path);
+  };
+
   // Initial fetch
   useEffect(() => {
     fetchChats();
-    fetch(`${API_BASE}/project/info`)
-      .then((r) => r.json())
-      .then((d) => setProjectInfo({ cwd: d.cwd || "", branch: d.branch || "", lastCommit: d.lastCommit || "" }))
-      .catch(() => {});
+    fetchProjects();
   }, []);
 
   return (
@@ -427,6 +486,7 @@ export default function App() {
           onNewChat={createChat}
           onDeleteChat={deleteChat}
           onRenameChat={renameChat}
+          onGoHome={goHome}
         />
       </div>
 
@@ -446,10 +506,11 @@ export default function App() {
         onCwdChange={setCwd}
         agentStatus={agentStatus}
         lastResult={lastResult}
-        projectInfo={projectInfo}
         onNewChat={createChat}
         onOpenPanel={setRightTab}
         onCompact={handleCompact}
+        recentProjects={recentProjects}
+        onOpenProject={openProject}
       />
 
       {/* Painel direito: abas Tools (ao vivo) / Git (diff das edições) */}

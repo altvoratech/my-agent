@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Plus, MessageSquare, Pencil, Check, X } from "lucide-react";
+import { Plus, MessageSquare, Pencil, Check, X, Home } from "lucide-react";
 
 interface Chat {
   id: string;
@@ -15,6 +15,7 @@ interface ChatListProps {
   onNewChat: () => void;
   onDeleteChat: (chatId: string) => void;
   onRenameChat: (chatId: string, title: string) => void;
+  onGoHome: () => void;
 }
 
 export function ChatList({
@@ -24,6 +25,7 @@ export function ChatList({
   onNewChat,
   onDeleteChat,
   onRenameChat,
+  onGoHome,
 }: ChatListProps) {
   const [editingId, setEditingId] = useState<string | null>(null);
   const [draft, setDraft] = useState("");
@@ -40,10 +42,17 @@ export function ChatList({
   return (
     <div className="flex flex-col h-full bg-gray-900 text-white">
       {/* Header */}
-      <div className="p-4 border-b border-gray-700">
+      <div className="p-4 border-b border-gray-700 flex gap-2">
+        <button
+          onClick={onGoHome}
+          title="Tela inicial (projetos)"
+          className="flex items-center justify-center px-3 py-2 bg-gray-800 hover:bg-gray-700 rounded-lg transition-colors text-gray-300"
+        >
+          <Home className="w-4 h-4" />
+        </button>
         <button
           onClick={onNewChat}
-          className="w-full flex items-center justify-center gap-2 px-4 py-2 bg-gray-700 hover:bg-gray-600 rounded-lg transition-colors"
+          className="flex-1 flex items-center justify-center gap-2 px-4 py-2 bg-gray-700 hover:bg-gray-600 rounded-lg transition-colors"
         >
           <Plus className="w-4 h-4" />
           <span>New Chat</span>
@@ -128,7 +137,12 @@ export function ChatList({
 
       {/* Footer */}
       <div className="p-4 border-t border-gray-700">
-        <p className="text-xs text-gray-500 text-center">my-agent-chat</p>
+        <button
+          onClick={onGoHome}
+          className="w-full text-xs text-gray-500 text-center hover:text-gray-300 transition-colors"
+        >
+          my-agent-chat
+        </button>
       </div>
     </div>
   );

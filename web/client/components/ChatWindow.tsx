@@ -7,8 +7,17 @@ import { toast } from "sonner";
 import {
   Folder, Send, Square, X, Copy, Check, ChevronRight, ChevronDown,
   Plug, Terminal, FileText, FilePen, Search, Globe, Wrench, GitBranch, Brain, Bot, BookOpen,
-  Wand2, Loader2,
+  Wand2, Loader2, FolderOpen, ArrowRight,
 } from "lucide-react";
+
+// tempo relativo curto ("há 3 min", "há 2 h", "há 5 d")
+function relTime(iso: string): string {
+  const diff = (Date.now() - new Date(iso).getTime()) / 1000;
+  if (diff < 60) return "agora";
+  if (diff < 3600) return `há ${Math.floor(diff / 60)} min`;
+  if (diff < 86400) return `há ${Math.floor(diff / 3600)} h`;
+  return `há ${Math.floor(diff / 86400)} d`;
+}
 
 interface Message {
   id: string;
@@ -35,10 +44,11 @@ interface ChatWindowProps {
   onCwdChange: (cwd: string) => void;
   agentStatus: string;
   lastResult: { cost?: number; duration?: number; inputTokens?: number; outputTokens?: number } | null;
-  projectInfo: { cwd: string; branch: string; lastCommit: string } | null;
   onNewChat: () => void;
   onOpenPanel: (tab: "tools" | "tasks" | "git") => void;
   onCompact: () => void;
+  recentProjects: { path: string; name: string; lastOpenedAt: string; branch: string }[];
+  onOpenProject: (path: string) => void;
 }
 
 const EFFORTS = [
@@ -419,10 +429,11 @@ export function ChatWindow({
   onCwdChange,
   agentStatus,
   lastResult,
-  projectInfo,
   onNewChat,
   onOpenPanel,
   onCompact,
+  recentProjects,
+  onOpenProject,
 }: ChatWindowProps) {
   const modelLabel = MODELS.find((m) => m.id === model)?.label ?? model;
   const [input, setInput] = useState("");
@@ -431,6 +442,9 @@ export function ChatWindow({
   const [images, setImages] = useState<{ media_type: string; data: string; url: string }[]>([]);
   const [paletteOpen, setPaletteOpen] = useState(false); // command palette (Ctrl+K)
   const [enhancing, setEnhancing] = useState(false); // ✨ prompt enhancer rodando
+  const [openPath, setOpenPath] = useState(""); // input "Abrir projeto" na tela inicial
+  const [browse, setBrowse] = useState<{ path: string; dirs: string[] }>({ path: "", dirs: [] });
+  const [browseOpen, setBrowseOpen] = useState(false); // dropdown de diretórios aberto
   const enhanceOriginalRef = useRef<string | null>(null); // rascunho antes do ✨ (p/ aprender)
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
@@ -469,13 +483,26 @@ export function ChatWindow({
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages]);
 
-  // carrega a lista de arquivos do projeto (para o autocomplete @)
+  // carrega a lista de arquivos do projeto (para o autocomplete @) — segue o cwd
   useEffect(() => {
-    fetch("/api/files")
+    const q = cwd.trim() ? `?cwd=${encodeURIComponent(cwd.trim())}` : "";
+    fetch(`/api/files${q}`)
       .then((r) => r.json())
       .then((d) => setFiles(d.files || []))
       .catch(() => {});
-  }, []);
+  }, [cwd]);
+
+  // navegador de diretórios do "Abrir projeto": lista subdirs do caminho digitado
+  useEffect(() => {
+    if (!browseOpen) return;
+    const id = setTimeout(() => {
+      fetch(`/api/browse?path=${encodeURIComponent(openPath)}`)
+        .then((r) => r.json())
+        .then((d) => setBrowse({ path: d.path || "", dirs: d.dirs || [] }))
+        .catch(() => {});
+    }, 120);
+    return () => clearTimeout(id);
+  }, [openPath, browseOpen]);
 
   // Ctrl/Cmd+K abre/fecha o command palette
   useEffect(() => {
@@ -580,24 +607,128 @@ export function ChatWindow({
   };
 
   if (!chatId) {
-    const projectName = projectInfo?.cwd ? projectInfo.cwd.replace(/\/$/, "").split("/").pop() : "my-agent";
+    const submitOpenPath = () => {
+      const p = openPath.trim();
+      if (p) {
+        onOpenProject(p);
+        setOpenPath("");
+      }
+    };
+    // fragmento sendo digitado (após a última "/") e subdirs filtrados pra navegação
+    const frag = openPath.slice(openPath.lastIndexOf("/") + 1).toLowerCase();
+    const dirMatches = (browseOpen ? browse.dirs : []).filter((d) => d.toLowerCase().startsWith(frag)).slice(0, 12);
+    const drillInto = (name: string) => {
+      const base = browse.path.replace(/\/$/, "");
+      setOpenPath(`${base}/${name}/`); // desce um nível; o effect refaz o browse
+    };
     return (
-      <div className="flex-1 flex items-center justify-center bg-gray-50">
-        <div className="text-center text-gray-500 max-w-md px-6">
-          <div className="inline-flex items-center justify-center w-12 h-12 rounded-xl bg-blue-50 text-blue-600 mb-4">
-            <Folder className="w-6 h-6" />
+      <div className="flex-1 overflow-y-auto bg-gray-50">
+        <div className="max-w-xl mx-auto px-6 py-12">
+          <div className="flex items-center gap-3 mb-1">
+            <div className="inline-flex items-center justify-center w-10 h-10 rounded-xl bg-blue-50 text-blue-600">
+              <Folder className="w-5 h-5" />
+            </div>
+            <div>
+              <p className="text-lg font-semibold text-gray-800">my-agent-chat</p>
+              <p className="text-xs text-gray-400">Abra um projeto ou retome um recente.</p>
+            </div>
           </div>
-          <p className="text-xl font-semibold text-gray-800">{projectName}</p>
-          {projectInfo?.cwd && <p className="text-xs font-mono text-gray-400 mt-1 truncate">{projectInfo.cwd}</p>}
-          <div className="flex items-center justify-center gap-3 mt-3 text-xs text-gray-500">
-            {projectInfo?.branch && (
-              <span className="flex items-center gap-1">
-                <GitBranch className="w-3.5 h-3.5" /> {projectInfo.branch}
-              </span>
+
+          {/* Abrir projeto: cola/digita um caminho */}
+          <div className="mt-6">
+            <label className="text-xs font-medium text-gray-500 flex items-center gap-1.5 mb-1.5">
+              <FolderOpen className="w-3.5 h-3.5" /> Abrir projeto
+            </label>
+            <div className="flex gap-2">
+              <div className="flex-1 relative">
+                <input
+                  type="text"
+                  value={openPath}
+                  onChange={(e) => setOpenPath(e.target.value)}
+                  onFocus={async () => {
+                    setBrowseOpen(true);
+                    if (!openPath.trim()) {
+                      try {
+                        const d = await (await fetch("/api/browse")).json();
+                        setOpenPath(`${d.path || ""}/`); // começa no home
+                      } catch {
+                        /* ignore */
+                      }
+                    }
+                  }}
+                  onBlur={() => setTimeout(() => setBrowseOpen(false), 150)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter") submitOpenPath();
+                    else if (e.key === "Escape") setBrowseOpen(false);
+                  }}
+                  placeholder="/caminho/do/projeto  (digite / para navegar)"
+                  spellCheck={false}
+                  className="w-full text-sm font-mono border border-gray-300 rounded-lg px-3 py-2 bg-white focus:outline-none focus:ring-2 focus:ring-blue-500"
+                />
+                {/* dropdown de subdiretórios */}
+                {browseOpen && dirMatches.length > 0 && (
+                  <div className="absolute top-full left-0 right-0 mt-1 bg-white border border-gray-200 rounded-lg shadow-lg max-h-60 overflow-y-auto z-10">
+                    {dirMatches.map((d) => (
+                      <button
+                        key={d}
+                        type="button"
+                        onMouseDown={(e) => {
+                          e.preventDefault(); // mantém o foco no input
+                          drillInto(d);
+                        }}
+                        className="w-full flex items-center gap-2 px-3 py-1.5 text-left text-xs font-mono text-gray-700 hover:bg-blue-50"
+                      >
+                        <Folder className="w-3.5 h-3.5 text-gray-400 shrink-0" />
+                        <span className="truncate">{d}/</span>
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
+              <button
+                onClick={submitOpenPath}
+                disabled={!openPath.trim()}
+                className="flex items-center gap-1.5 px-3 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-40 transition-colors text-sm shrink-0"
+              >
+                Abrir <ArrowRight className="w-4 h-4" />
+              </button>
+            </div>
+          </div>
+
+          {/* Projetos recentes */}
+          <div className="mt-7">
+            <p className="text-xs font-medium text-gray-500 mb-2">Projetos recentes</p>
+            {recentProjects.length === 0 ? (
+              <p className="text-xs text-gray-400">Nenhum ainda — abra um projeto acima para começar.</p>
+            ) : (
+              <div className="space-y-1">
+                {recentProjects.map((p) => (
+                  <button
+                    key={p.path}
+                    onClick={() => onOpenProject(p.path)}
+                    className="group w-full flex items-center gap-3 px-3 py-2 rounded-lg border border-gray-200 bg-white hover:border-blue-300 hover:bg-blue-50/40 transition-colors text-left"
+                  >
+                    <Folder className="w-4 h-4 text-gray-400 group-hover:text-blue-500 shrink-0" />
+                    <div className="min-w-0 flex-1">
+                      <div className="flex items-center gap-2">
+                        <span className="text-sm font-medium text-gray-800 truncate">{p.name}</span>
+                        {p.branch && (
+                          <span className="flex items-center gap-0.5 text-[10px] text-gray-400 shrink-0">
+                            <GitBranch className="w-3 h-3" />
+                            {p.branch}
+                          </span>
+                        )}
+                      </div>
+                      <div className="text-[11px] font-mono text-gray-400 truncate">{p.path}</div>
+                    </div>
+                    <span className="text-[10px] text-gray-400 shrink-0">{relTime(p.lastOpenedAt)}</span>
+                  </button>
+                ))}
+              </div>
             )}
-            {projectInfo?.lastCommit && <span>· modificado {projectInfo.lastCommit}</span>}
           </div>
-          <p className="text-sm mt-5">Selecione um chat ou crie um novo para começar.</p>
+
+          <p className="text-xs text-gray-400 mt-7">Ou selecione um chat na barra lateral.</p>
         </div>
       </div>
     );

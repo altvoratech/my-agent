@@ -6,7 +6,8 @@ import { promisify } from "node:util";
 
 const execFileP = promisify(execFile);
 import { createServer } from "http";
-import { statSync } from "node:fs";
+import { statSync, readdirSync } from "node:fs";
+import { homedir } from "node:os";
 import { WebSocketServer, WebSocket } from "ws";
 import path from "path";
 import { fileURLToPath } from "url";
@@ -126,10 +127,24 @@ app.get("/api/chats/:id/messages", (req, res) => {
   res.json(messages);
 });
 
-// Git diff do diretório atual (read-only). --relative limita ao cwd (o my-agent
-// vive dentro de um repo maior, então sem isso viria ruído de outros projetos).
-app.get("/api/git/diff", async (_req, res) => {
-  const cwd = process.cwd();
+// cwd para os endpoints read-only: ?cwd=... (segue o diretório da sessão).
+// Valida que é um diretório existente; arquivo -> pasta; inválido -> process.cwd().
+function cwdFromQuery(req: express.Request): string {
+  const raw = typeof req.query.cwd === "string" ? req.query.cwd.trim() : "";
+  if (!raw) return process.cwd();
+  try {
+    const st = statSync(raw);
+    if (st.isDirectory()) return raw;
+    if (st.isFile()) return path.dirname(raw);
+  } catch {
+    /* inexistente -> fallback */
+  }
+  return process.cwd();
+}
+
+// Git diff do diretório da sessão (read-only). --relative limita ao cwd.
+app.get("/api/git/diff", async (req, res) => {
+  const cwd = cwdFromQuery(req);
   try {
     const [diff, status, numstat] = await Promise.all([
       execFileP("git", ["diff", "--relative", "--", "."], { cwd, maxBuffer: 8e6 }),
@@ -158,8 +173,8 @@ app.post("/api/enhance", async (req, res) => {
 });
 
 // Info do projeto para o empty state (cwd, branch, última modificação do repo).
-app.get("/api/project/info", async (_req, res) => {
-  const cwd = process.cwd();
+app.get("/api/project/info", async (req, res) => {
+  const cwd = cwdFromQuery(req);
   try {
     const [branch, lastCommit] = await Promise.all([
       execFileP("git", ["rev-parse", "--abbrev-ref", "HEAD"], { cwd }).then((r) => r.stdout.trim()).catch(() => ""),
@@ -171,11 +186,55 @@ app.get("/api/project/info", async (_req, res) => {
   }
 });
 
+// Descoberta de diretórios (navegador do "Abrir projeto"). Lista os subdiretórios
+// de `path`; se o caminho for parcial/inexistente, lista os do pai (pra filtrar
+// enquanto o usuário digita). Esconde dot-dirs. Local/single-user: leitura de dir ok.
+app.get("/api/browse", (req, res) => {
+  const raw = typeof req.query.path === "string" && req.query.path.trim() ? req.query.path.trim() : homedir();
+  let dir = raw;
+  try {
+    const st = statSync(dir);
+    if (st.isFile()) dir = path.dirname(dir);
+    else if (!st.isDirectory()) dir = homedir();
+  } catch {
+    // caminho parcial (ainda digitando) -> tenta o diretório pai
+    const parent = path.dirname(dir);
+    try {
+      dir = statSync(parent).isDirectory() ? parent : homedir();
+    } catch {
+      dir = homedir();
+    }
+  }
+  try {
+    const dirs = readdirSync(dir, { withFileTypes: true })
+      .filter((e) => e.isDirectory() && !e.name.startsWith("."))
+      .map((e) => e.name)
+      .sort((a, b) => a.localeCompare(b));
+    res.json({ path: dir, parent: path.dirname(dir), dirs });
+  } catch (e) {
+    res.json({ path: dir, parent: path.dirname(dir), dirs: [], error: (e as Error).message });
+  }
+});
+
+// Projetos recentes (tela inicial): diretórios já usados + nome (basename) + branch.
+app.get("/api/projects", async (_req, res) => {
+  const projects = chatStore.recentProjects(12);
+  const withMeta = await Promise.all(
+    projects.map(async (p) => {
+      const branch = await execFileP("git", ["rev-parse", "--abbrev-ref", "HEAD"], { cwd: p.path })
+        .then((r) => r.stdout.trim())
+        .catch(() => "");
+      return { path: p.path, name: path.basename(p.path) || p.path, lastOpenedAt: p.lastOpenedAt, branch };
+    }),
+  );
+  res.json({ projects: withMeta });
+});
+
 // Lista os arquivos rastreados do projeto (para o autocomplete @). git ls-files
 // já respeita o .gitignore (não traz node_modules, .env, etc).
-app.get("/api/files", async (_req, res) => {
+app.get("/api/files", async (req, res) => {
   try {
-    const { stdout } = await execFileP("git", ["ls-files"], { cwd: process.cwd(), maxBuffer: 8e6 });
+    const { stdout } = await execFileP("git", ["ls-files"], { cwd: cwdFromQuery(req), maxBuffer: 8e6 });
     res.json({ files: stdout.split("\n").filter(Boolean) });
   } catch (e) {
     res.json({ files: [], error: (e as Error).message });
@@ -255,6 +314,10 @@ wss.on("connection", (ws: WSClient) => {
           }
           // se a mensagem veio do ✨, registra o par (rascunho -> enviado) p/ o enhancer aprender
           if (message.enhancedFrom) chatStore.addPromptExample(message.enhancedFrom, message.content);
+          // registra o diretório como projeto recente (para a tela inicial)
+          chatStore.touchProject(safeCwd ?? process.cwd());
+          // guarda o diretório no próprio chat (para reabrir nele depois)
+          chatStore.setChatCwd(message.chatId, safeCwd ?? process.cwd());
           break;
         }
 

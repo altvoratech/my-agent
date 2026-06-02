@@ -12,6 +12,7 @@ export interface Chat {
   title: string;
   createdAt: string;
   updatedAt: string;
+  cwd?: string; // diretório de trabalho do chat (para reabrir nele)
 }
 
 // Message stored in memory

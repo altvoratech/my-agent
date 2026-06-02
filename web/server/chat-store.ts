@@ -37,12 +37,24 @@ db.exec(`
     final     TEXT NOT NULL,
     createdAt TEXT NOT NULL
   );
+
+  -- Projetos recentes: diretórios em que o agente já trabalhou (para a tela inicial).
+  CREATE TABLE IF NOT EXISTS recent_projects (
+    path         TEXT PRIMARY KEY,
+    lastOpenedAt TEXT NOT NULL
+  );
 `);
 
 // Migração: coluna `images` (JSON com as URLs /uploads/...). Bancos antigos não têm.
 const messageCols = db.prepare("PRAGMA table_info(messages)").all() as { name: string }[];
 if (!messageCols.some((c) => c.name === "images")) {
   db.exec("ALTER TABLE messages ADD COLUMN images TEXT");
+}
+
+// Migração: coluna `cwd` no chat (diretório de trabalho daquele chat).
+const chatCols = db.prepare("PRAGMA table_info(chats)").all() as { name: string }[];
+if (!chatCols.some((c) => c.name === "cwd")) {
+  db.exec("ALTER TABLE chats ADD COLUMN cwd TEXT");
 }
 
 class ChatStore {
@@ -52,6 +64,7 @@ class ChatStore {
   private selectChat = db.prepare("SELECT * FROM chats WHERE id = ?");
   private selectAllChats = db.prepare("SELECT * FROM chats ORDER BY updatedAt DESC");
   private touchChat = db.prepare("UPDATE chats SET title = ?, updatedAt = ? WHERE id = ?");
+  private setChatCwdStmt = db.prepare("UPDATE chats SET cwd = ? WHERE id = ?");
   private removeChat = db.prepare("DELETE FROM chats WHERE id = ?");
   private insertMessage = db.prepare(
     "INSERT INTO messages (id, chatId, role, content, images, timestamp) VALUES (?, ?, ?, ?, ?, ?)",
@@ -64,6 +77,12 @@ class ChatStore {
   );
   private selectRecentExamples = db.prepare(
     "SELECT original, final FROM prompt_examples ORDER BY createdAt DESC LIMIT ?",
+  );
+  private upsertProject = db.prepare(
+    "INSERT INTO recent_projects (path, lastOpenedAt) VALUES (?, ?) ON CONFLICT(path) DO UPDATE SET lastOpenedAt = excluded.lastOpenedAt",
+  );
+  private selectRecentProjects = db.prepare(
+    "SELECT path, lastOpenedAt FROM recent_projects ORDER BY lastOpenedAt DESC LIMIT ?",
   );
 
   createChat(title?: string): Chat {
@@ -134,6 +153,22 @@ class ChatStore {
   // últimos N pares aprovados (mais recentes primeiro) para injetar como few-shot
   recentPromptExamples(limit = 5): { original: string; final: string }[] {
     return this.selectRecentExamples.all(limit) as { original: string; final: string }[];
+  }
+
+  // guarda o diretório de trabalho do chat (para reabrir nele)
+  setChatCwd(chatId: string, cwd: string) {
+    if (cwd) this.setChatCwdStmt.run(cwd, chatId);
+  }
+
+  // registra/atualiza um diretório como projeto recente
+  touchProject(path: string) {
+    if (!path) return;
+    this.upsertProject.run(path, new Date().toISOString());
+  }
+
+  // projetos recentes (mais recentes primeiro)
+  recentProjects(limit = 10): { path: string; lastOpenedAt: string }[] {
+    return this.selectRecentProjects.all(limit) as { path: string; lastOpenedAt: string }[];
   }
 }
 
