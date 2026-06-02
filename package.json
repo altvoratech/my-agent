@@ -3,9 +3,6 @@
   "scripts": {
     "ask": "tsx --env-file=.env src/agents/guardian-of-library.ts",
     "index": "tsx --env-file=.env src/rag/index.ts",
-    "orquestrator": "tsx --env-file=.env src/agents/orquestrator.ts",
-    "review": "tsx --env-file=.env src/agents/reviewer.ts",
-    "chat": "tsx --env-file=.env src/agents/chat.ts",
     "typecheck": "tsc -p tsconfig.json && tsc -p web/client/tsconfig.json",
     "web": "concurrently -n server,client -c green,cyan \"npm:web:server\" \"npm:web:client\"",
     "web:server": "tsx --env-file=.env web/server/server.ts",

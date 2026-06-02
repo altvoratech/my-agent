@@ -71,12 +71,14 @@ sources/          # docs do Agent SDK em Markdown (ver "Obter as docs")
 src/
   rag/            # indexador (chunk fence-aware → Jina embed → Neon/pgvector) + retriever
   agents/
+    runtime.ts              Base buildAgentOptions — scaffolding comum das options do query()
+    main-agent.ts           Definição do agente principal (web): system prompt + tools + aprovação
+    subagents.ts            Subagentes read-only (explorer/reviewer/planner) via a tool Agent
+    tester.ts               Runner do /test (query próprio, Bash liberado, guard ativo)
+    enhance.ts              Prompt enhancer (✨) — reescreve a mensagem num prompt acionável
     guardian.ts             Guardian of Library — responde ancorado nas fontes (loop travado)
     guardian-of-library.ts  CLI do guardião (npm run ask)
     consultor.ts            Expõe o guardião como MCP server in-process (consultar_guardian)
-    reviewer.ts             Revisa um arquivo contra as docs
-    orquestrator.ts         Demo de encadeamento de agentes
-    chat.ts                 Chat no terminal
   core/
     guard.ts      Hook PreToolUse — veta destrutivo; askOnMutate → roteia Write/Edit/Bash ao canUseTool
     hooks.ts      Tracking de toda tool call (logger)
@@ -176,10 +178,7 @@ npm run web            # sobe server (3001) + Vite (5173)  →  http://localhost
 **CLI**
 
 ```bash
-npm run ask "como configuro tools no SDK?"     # pergunta às docs
-npm run review src/agents/guardian.ts          # revisa um arquivo contra as docs
-npm run chat                                   # chat no terminal
-npm run orquestrator                           # demo de encadeamento
+npm run ask "como configuro tools no SDK?"     # pergunta às docs (guardião + RAG)
 npm run typecheck                              # tsc servidor (NodeNext) + cliente (bundler)
 ```
 
