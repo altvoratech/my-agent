@@ -312,7 +312,7 @@ function CommandPalette({
 function SubAgentCard({ message }: { message: Message }) {
   const input = message.toolInput || {};
   const isGuardian = message.toolName?.startsWith("mcp__consultor__");
-  const name = isGuardian ? "guardião" : input.subagent_type || "subagente";
+  const name = isGuardian ? "guardião" : input.subagent_type || input.agent || input.subagentType || "subagente";
   const label = isGuardian
     ? String(input.pergunta || "Consulta às docs do Agent SDK")
     : String(input.description || input.prompt || "Tarefa delegada");

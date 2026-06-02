@@ -165,9 +165,9 @@ export default function App() {
             prev.includes(message.toolInput.file_path) ? prev : [...prev, message.toolInput.file_path]
           );
         }
-        // delegações (Task) e consulta ao guardião viram CARD inline no fluxo (como o opencode),
+        // delegações (Agent/Task) e consulta ao guardião viram CARD inline no fluxo (como o opencode),
         // em vez de irem só para o painel de atividade.
-        if (message.toolName === "Task" || message.toolName?.startsWith("mcp__consultor__")) {
+        if (message.toolName === "Task" || message.toolName === "Agent" || message.toolName?.startsWith("mcp__consultor__")) {
           setMessages((prev) => [
             ...prev,
             {
@@ -307,7 +307,8 @@ export default function App() {
   // Create new chat — herda o cwd (passado, ou o atual). O novo chat já nasce com
   // esse diretório localmente para o effect de restauração não zerá-lo.
   const createChat = async (cwdForChat?: string) => {
-    const useCwd = cwdForChat ?? cwd;
+    // guarda: onClick={createChat} passa o evento como 1º arg -> só usa se for string
+    const useCwd = typeof cwdForChat === "string" ? cwdForChat : cwd;
     try {
       const res = await fetch(`${API_BASE}/chats`, {
         method: "POST",

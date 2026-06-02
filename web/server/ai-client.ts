@@ -3,15 +3,22 @@
 // docs (consultar_guardian) + guard hook vetando o perigoso.
 import { query } from '@anthropic-ai/claude-agent-sdk';
 import { consultorServer, CONSULTOR_TOOL } from '../../src/agents/consultor.ts';
+import { subagents } from '../../src/agents/subagents.ts';
 import { createGuardedHooks } from '../../src/core/guard.ts';
 
 function buildSystemPrompt(cwd: string) {
   return `Você é um assistente de engenharia trabalhando no projeto em: ${cwd}
-Capacidades: ler (Read, Glob, Grep), editar/criar arquivos (Edit, Write), rodar comandos (Bash) e
-consultar o guardião (consultar_guardian) — que responde ancorado na documentação OFICIAL do Claude Agent SDK.
+Capacidades: ler (Read, Glob, Grep), editar/criar arquivos (Edit, Write), rodar comandos (Bash),
+consultar o guardião (consultar_guardian) — ancorado na doc OFICIAL do Claude Agent SDK — e
+DELEGAR subtarefas a subagentes especialistas via a tool Agent.
+Subagentes disponíveis (read-only; eles reportam, você implementa):
+- explorer: mapeia/entende o código antes de implementar (arquitetura, onde algo vive, fluxos).
+- reviewer: revisa código contra a doc oficial do SDK (via guardião).
+- planner: planeja uma implementação não-trivial (passos, arquivos, riscos) sem escrever código.
 Regras:
 - O diretório de trabalho é ${cwd}. Use caminhos relativos a esse diretório ou absolutos dentro dele.
 - Quando o usuário referenciar um arquivo com @caminho/do/arquivo, leia-o com Read antes de responder.
+- Para tarefas grandes/desconhecidas, delegue a exploração/plano antes de editar (use explorer/planner).
 - Para QUALQUER afirmação sobre a API do Agent SDK, consulte o guardião antes — não confie na memória.
 - Você pode corrigir o código diretamente (Edit/Write) quando fizer sentido.
 - Um guard bloqueia ações destrutivas (rm -rf, escrita fora do projeto, .env). Se algo for bloqueado, explique e siga outro caminho.
@@ -85,8 +92,10 @@ export class AgentSession {
         // emite stream_event (text_delta) para o front renderizar token a token
         includePartialMessages: true,
         mcpServers: { consultor: consultorServer },
-        // só leitura é pré-aprovada; escrita/exec caem no canUseTool (default mode)
-        allowedTools: ['Read', 'Glob', 'Grep', 'TodoWrite', CONSULTOR_TOOL],
+        // subagentes especialistas (read-only) que o agente principal invoca via Agent
+        agents: subagents,
+        // leitura + delegação pré-aprovadas; escrita/exec caem no canUseTool (default mode)
+        allowedTools: ['Read', 'Glob', 'Grep', 'TodoWrite', 'Agent', 'Task', CONSULTOR_TOOL],
         permissionMode: 'default',
         systemPrompt: { type: 'preset', preset: 'claude_code', append: buildSystemPrompt(cwd) },
         hooks: createGuardedHooks(cwd, { askOnMutate: true }),
