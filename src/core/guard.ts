@@ -8,7 +8,10 @@ import { log } from './logger.ts';
 import { onPreToolUse, onPostToolUse } from './hooks.ts';
 
 // Comandos shell destrutivos / de escalonamento.
-const DANGEROUS_BASH = /\brm\s+-[rf]{1,2}\b|\bmkfs\b|\bdd\s+if=|:\(\)\s*\{|>\s*\/dev\/|\bsudo\b|\bchmod\s+-R\b|\bgit\s+(reset\s+--hard|clean\s+-[fd])/;
+// >\/dev\/... só é perigoso para device files (ex: /dev/sda). Redirecionamentos
+// comuns e inofensivos (>/dev/null, 2>/dev/null, /dev/std*, /dev/tty, /dev/fd/N)
+// são liberados via negative lookahead — senão o guard barra um idioma onipresente.
+const DANGEROUS_BASH = /\brm\s+-[rf]{1,2}\b|\bmkfs\b|\bdd\s+if=|:\(\)\s*\{|>\s*\/dev\/(?!null|std(?:in|out|err)|tty|fd\/|zero|u?random)|\bsudo\b|\bchmod\s+-R\b|\bgit\s+(reset\s+--hard|clean\s+-[fd])/;
 
 // Tools que mexem no sistema -> candidatas a confirmação humana (canUseTool).
 const MUTATING_TOOLS = ['Bash', 'Write', 'Edit', 'MultiEdit', 'NotebookEdit'];
